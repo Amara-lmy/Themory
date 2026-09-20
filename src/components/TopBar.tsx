@@ -49,7 +49,7 @@ export function TopBar({
           onClick={() => navigate('/')}
         >
           <div className="brand-logo">
-            <img src="/favicon.svg" alt="" width={20} height={20} style={{ borderRadius: 5 }} />
+            <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" width={20} height={20} style={{ borderRadius: 5 }} />
           </div>
           <div className="brand-name">
             <span className="brand-cn">研忆</span>
