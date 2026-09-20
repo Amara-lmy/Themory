@@ -1,39 +1,3 @@
-// ====== Monkey-patch: 修 @cloudbase/node-sdk 在签名 Authorization header 时
-// 注入 \r 等非法字符导致 Node http.ClientRequest.setHeader 抛 ERR_INVALID_CHAR
-// 必须在任何 import @cloudbase/* 之前执行
-// 方案：同时 patch ClientRequest.prototype 和 HTTP.request 的原始 setHeader
-import http from 'node:http'
-import https from 'node:https'
-
-const _setHeader = Symbol.for('_patched_setHeader')
-const _origReqSetHeader = http.ClientRequest.prototype.setHeader
-const _origHttpsRequest = https.request
-
-function sanitizeHeaderValue(v: any): any {
-  if (typeof v !== 'string') return v
-  // \r\n + 所有控制字符（除了制表符 \t）
-  const cleaned = v.replace(/[\r\n\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
-  return cleaned
-}
-
-http.ClientRequest.prototype.setHeader = function (name: string, value: any) {
-  const clean = sanitizeHeaderValue(value)
-  return _origReqSetHeader.call(this, name, clean)
-}
-
-// 同时 patch _http_outgoing 内部 writeHead（有的 SDK 走 writeHead 不走 setHeader）
-const _origWriteHead = http.ClientRequest.prototype.writeHead
-http.ClientRequest.prototype.writeHead = function (...args: any[]) {
-  if (args.length >= 2 && typeof args[1] === 'object') {
-    for (const k of Object.keys(args[1])) {
-      args[1][k] = sanitizeHeaderValue(args[1][k])
-    }
-  }
-  return _origWriteHead.apply(this, args as any)
-}
-
-console.log('[patch] http.ClientRequest.setHeader sanitizer installed')
-
 import express, { Request, Response } from 'express'
 import cors from 'cors'
 import fs from 'node:fs'
