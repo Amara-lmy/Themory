@@ -1,3 +1,15 @@
+// ====== Monkey-patch: 修 @cloudbase/node-sdk 在签名 Authorization header 时
+// 注入 \r 等非法字符导致 Node http.ClientRequest.setHeader 抛 ERR_INVALID_CHAR
+// 必须在任何 import @cloudbase/* 之前执行
+import http from 'node:http'
+const _origSetHeader = (http as any).ClientRequest.prototype.setHeader
+;(http as any).ClientRequest.prototype.setHeader = function (name: string, value: any) {
+  if (typeof value === 'string' && /[\r\n\u0000-\u001f]/.test(value)) {
+    value = value.replace(/[\r\n\u0000-\u001f]/g, '')
+  }
+  return _origSetHeader.call(this, name, value)
+}
+
 import express, { Request, Response } from 'express'
 import cors from 'cors'
 import fs from 'node:fs'
