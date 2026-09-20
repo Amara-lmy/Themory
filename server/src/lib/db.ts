@@ -17,15 +17,16 @@ import cloudbase from '@cloudbase/node-sdk'
 const isInCloudBaseRun = !!process.env.TCB_SECRETID && !!process.env.TCB_SECRETKEY
 
 const initOpts: Record<string, unknown> = {
-  env: process.env.CLOUDBASE_ENV_ID!,
+  env: process.env.CLOUDBASE_ENV_ID!.trim(),
 }
-if (!isInCloudBaseRun) {
-  initOpts.secretId = process.env.COS_SECRET_ID!
-  initOpts.secretKey = process.env.COS_SECRET_KEY!
+// CloudBase Run 环境注入的 TCB_SECRETID/TCB_SECRETKEY 同时拥有 COS 和 PostgreSQL 权限
+// 优先使用自动注入凭证；否则（本地/其他环境）用 COS_SECRET_ID/KEY（注意 trim 去粘贴换行）
+if (isInCloudBaseRun) {
+  initOpts.secretId = process.env.TCB_SECRETID!.trim()
+  initOpts.secretKey = process.env.TCB_SECRETKEY!.trim()
 } else {
-  // 显式覆盖 COS SDK 也能拿到正确凭证（CloudBase Run 容器的临时密钥）
-  if (process.env.COS_SECRET_ID) initOpts.secretId = process.env.COS_SECRET_ID
-  if (process.env.COS_SECRET_KEY) initOpts.secretKey = process.env.COS_SECRET_KEY
+  initOpts.secretId = (process.env.COS_SECRET_ID || '').trim()
+  initOpts.secretKey = (process.env.COS_SECRET_KEY || '').trim()
 }
 
 const app = cloudbase.init(initOpts as any)
