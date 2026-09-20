@@ -108,6 +108,44 @@ app.get('/api/health/dbwrite', async (_req: Request, res: Response) => {
   res.json(out)
 })
 
+// 诊断端点：模拟登录全流程（查用户→签JWT→建session），逐步返回错误
+app.get('/api/health/login', async (_req: Request, res: Response) => {
+  const out: Record<string, unknown> = { ts: Date.now() }
+  out.config = {
+    jwtSecretLen: config.jwtSecret?.length,
+    jwtSecretFirst: config.jwtSecret?.slice(0, 6),
+    jwtExpiresIn: JSON.stringify(config.jwtExpiresIn),
+    refreshExpiresIn: JSON.stringify(config.refreshExpiresIn),
+    refreshSecretLen: config.refreshSecret?.length,
+  }
+  try {
+    const u = await rdb.from(T.users).select('*').eq('phone', '13700000001').maybeSingle()
+    out.step1_findUser = u.error ? { error: u.error } : { ok: true, found: !!u.data, id: u.data?.id }
+    if (!u.data) { res.json(out); return }
+    const user = u.data
+    const jwt = await import('jsonwebtoken')
+    try {
+      const at = jwt.default.sign({ userId: user.id, phone: '13700000001' }, config.jwtSecret, {
+        expiresIn: config.jwtExpiresIn as any,
+      })
+      out.step2_signAccess = { ok: true, tokenLen: at.length }
+    } catch (e: any) {
+      out.step2_signAccess = { exception: e?.message }
+    }
+    try {
+      const rt = jwt.default.sign({ userId: user.id, phone: '13700000001' }, config.refreshSecret, {
+        expiresIn: config.refreshExpiresIn as any,
+      })
+      out.step3_signRefresh = { ok: true, tokenLen: rt.length }
+    } catch (e: any) {
+      out.step3_signRefresh = { exception: e?.message }
+    }
+  } catch (e: any) {
+    out.outerException = e?.message
+  }
+  res.json(out)
+})
+
 // ====== 路由 ======
 app.use('/api/auth', authRouter)
 app.use('/api/profile', profileRouter)
