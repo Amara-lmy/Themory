@@ -71,10 +71,17 @@ app.get('/api/health/db', async (_req: Request, res: Response) => {
     ts: Date.now(),
     envId: config.cloudbaseEnv,
     nodeEnv: config.nodeEnv,
-    hasSecretId: !!config.cos.secretId,
-    hasSecretKey: !!config.cos.secretKey,
-    bucket: config.cos.bucket,
+    nodeVersion: process.version,
   }
+  // 输出所有 TCB_ 开头的环境变量（CloudBase 自动注入）
+  const tcbEnv: Record<string, string> = {}
+  for (const k of Object.keys(process.env)) {
+    if (k.startsWith('TCB_')) {
+      const v = process.env[k] || ''
+      tcbEnv[k] = v.length > 100 ? v.slice(0, 100) + '...' : v
+    }
+  }
+  out.tcbEnv = tcbEnv
   try {
     const r = await rdb.from(T.users).select('id').limit(1)
     out.rdbRaw = r
@@ -88,18 +95,7 @@ app.get('/api/health/db', async (_req: Request, res: Response) => {
   } catch (e: any) {
     out.rdbOK = false
     out.dbError = e?.message || String(e)
-    out.dbStack = e?.stack
   }
-  try {
-    const all: Record<string, unknown> = {}
-    for (const k of Object.keys(process.env)) {
-      if (/^(CLOUDBASE|COS_|JWT|OPENAI|NODE_|PORT|CORS)/.test(k)) {
-        const v = process.env[k] || ''
-        all[k] = k.includes('SECRET|KEY|TOKEN') ? `${v.slice(0,6)}...${v.slice(-4)}` : v
-      }
-    }
-    out.envSample = all
-  } catch {}
   res.json(out)
 })
 
