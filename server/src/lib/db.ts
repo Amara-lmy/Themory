@@ -8,11 +8,27 @@ import 'dotenv/config'
 import crypto from 'crypto'
 import cloudbase from '@cloudbase/node-sdk'
 
-const app = cloudbase.init({
+/**
+ * CloudBase Run 容器会自动注入 TCB_SECRETID/TCB_SECRETKEY 临时凭证
+ * （同时拥有 COS 和 PostgreSQL 权限）。在此环境下让 SDK 自动鉴权，
+ * 避免用 COS 子账号密钥调 PostgreSQL 导致 401 网关拒绝 + JSON 解析崩溃。
+ * 本地开发等其他环境才 fallback 到显式密钥。
+ */
+const isInCloudBaseRun = !!process.env.TCB_SECRETID && !!process.env.TCB_SECRETKEY
+
+const initOpts: Record<string, unknown> = {
   env: process.env.CLOUDBASE_ENV_ID!,
-  secretId: process.env.COS_SECRET_ID!,
-  secretKey: process.env.COS_SECRET_KEY!,
-})
+}
+if (!isInCloudBaseRun) {
+  initOpts.secretId = process.env.COS_SECRET_ID!
+  initOpts.secretKey = process.env.COS_SECRET_KEY!
+} else {
+  // 显式覆盖 COS SDK 也能拿到正确凭证（CloudBase Run 容器的临时密钥）
+  if (process.env.COS_SECRET_ID) initOpts.secretId = process.env.COS_SECRET_ID
+  if (process.env.COS_SECRET_KEY) initOpts.secretKey = process.env.COS_SECRET_KEY
+}
+
+const app = cloudbase.init(initOpts as any)
 
 // rdb 方法在当前 SDK 版本的类型声明中缺失，运行时可用（已实测）
 export const rdb = (app as any).rdb({ database: 'public' })
