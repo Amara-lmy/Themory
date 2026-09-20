@@ -3,6 +3,7 @@ import cors from 'cors'
 import fs from 'node:fs'
 import path from 'node:path'
 import { config } from './config.js'
+import { rdb, T, unwrap } from './lib/db.js'
 import authRouter from './routes/auth.js'
 import papersRouter from './routes/papers.js'
 import categoriesRouter from './routes/categories.js'
@@ -26,6 +27,44 @@ app.use(express.urlencoded({ extended: true }))
 // ====== 健康检查 ======
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ code: 'OK', message: 'Themory API', timestamp: Date.now() })
+})
+
+// 诊断端点：测试数据库连通性（仅开发用）
+app.get('/api/health/db', async (_req: Request, res: Response) => {
+  const out: Record<string, unknown> = {
+    ts: Date.now(),
+    envId: config.cloudbaseEnv,
+    nodeEnv: config.nodeEnv,
+    hasSecretId: !!config.cos.secretId,
+    hasSecretKey: !!config.cos.secretKey,
+    bucket: config.cos.bucket,
+  }
+  try {
+    const r = await rdb.from(T.users).select('id').limit(1)
+    out.rdbRaw = r
+    if (r && !r.error) {
+      out.rdbOK = true
+      out.dbError = null
+    } else {
+      out.rdbOK = false
+      out.dbError = r?.error
+    }
+  } catch (e: any) {
+    out.rdbOK = false
+    out.dbError = e?.message || String(e)
+    out.dbStack = e?.stack
+  }
+  try {
+    const all: Record<string, unknown> = {}
+    for (const k of Object.keys(process.env)) {
+      if (/^(CLOUDBASE|COS_|JWT|OPENAI|NODE_|PORT|CORS)/.test(k)) {
+        const v = process.env[k] || ''
+        all[k] = k.includes('SECRET|KEY|TOKEN') ? `${v.slice(0,6)}...${v.slice(-4)}` : v
+      }
+    }
+    out.envSample = all
+  } catch {}
+  res.json(out)
 })
 
 // ====== 路由 ======
