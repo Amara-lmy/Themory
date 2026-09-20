@@ -2,7 +2,6 @@ import express, { Request, Response } from 'express'
 import cors from 'cors'
 import fs from 'node:fs'
 import path from 'node:path'
-import crypto from 'node:crypto'
 import { config } from './config.js'
 import { rdb, T, unwrap } from './lib/db.js'
 import authRouter from './routes/auth.js'
@@ -30,161 +29,14 @@ app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ code: 'OK', message: 'Themory API', timestamp: Date.now() })
 })
 
-// 诊断端点：测试数据库连通性（仅开发用）
+// 诊断端点：数据库连通性
 app.get('/api/health/db', async (_req: Request, res: Response) => {
-  const out: Record<string, unknown> = {
-    ts: Date.now(),
-    envId: config.cloudbaseEnv,
-    nodeEnv: config.nodeEnv,
-    nodeVersion: process.version,
-  }
-  // 输出所有 TCB_ 开头的环境变量（CloudBase 自动注入）
-  const tcbEnv: Record<string, string> = {}
-  for (const k of Object.keys(process.env)) {
-    if (k.startsWith('TCB_')) {
-      const v = process.env[k] || ''
-      tcbEnv[k] = v.length > 100 ? v.slice(0, 100) + '...' : v
-    }
-  }
-  out.tcbEnv = tcbEnv
   try {
     const r = await rdb.from(T.users).select('id').limit(1)
-    out.rdbRaw = r
-    if (r && !r.error) {
-      out.rdbOK = true
-      out.dbError = null
-    } else {
-      out.rdbOK = false
-      out.dbError = r?.error
-    }
+    res.json({ ts: Date.now(), rdbOK: !r?.error, dbError: r?.error?.message || null })
   } catch (e: any) {
-    out.rdbOK = false
-    out.dbError = e?.message || String(e)
+    res.json({ ts: Date.now(), rdbOK: false, dbError: e?.message || String(e) })
   }
-  res.json(out)
-})
-
-// 诊断端点：测试数据库写权限（UPDATE/INSERT/DELETE），逐步返回原始错误
-app.get('/api/health/dbwrite', async (_req: Request, res: Response) => {
-  const out: Record<string, unknown> = { ts: Date.now() }
-  // 1. 找一个用户
-  let uid = ''
-  try {
-    const u = await rdb.from(T.users).select('id').limit(1)
-    out.step1_select = u.error ? { error: u.error } : { ok: true, id: u.data?.[0]?.id }
-    uid = u.data?.[0]?.id || ''
-  } catch (e: any) {
-    out.step1_select = { exception: e?.message || String(e) }
-  }
-  // 2. UPDATE
-  if (uid) {
-    try {
-      const r = await rdb.from(T.users).update({ lastLoginAt: new Date().toISOString() }).eq('id', uid)
-      out.step2_update = r?.error ? { error: r.error, status: r.status } : { ok: true }
-    } catch (e: any) {
-      out.step2_update = { exception: e?.message || String(e), stack: e?.stack?.slice(0, 500) }
-    }
-  }
-  // 3. INSERT 一条探针 session，再删除
-  const probeId = crypto.randomUUID()
-  try {
-    const r = await rdb.from(T.sessions).insert({
-      id: probeId,
-      userId: uid || probeId,
-      refreshToken: 'probe-' + probeId,
-      expiresAt: new Date(Date.now() + 60000).toISOString(),
-    })
-    out.step3_insert = r?.error ? { error: r.error, status: r.status } : { ok: true }
-  } catch (e: any) {
-    out.step3_insert = { exception: e?.message || String(e), stack: e?.stack?.slice(0, 500) }
-  }
-  // 4. DELETE 清理
-  try {
-    const r = await rdb.from(T.sessions).delete().eq('id', probeId)
-    out.step4_delete = r?.error ? { error: r.error, status: r.status } : { ok: true }
-  } catch (e: any) {
-    out.step4_delete = { exception: e?.message || String(e) }
-  }
-  res.json(out)
-})
-
-// 诊断端点：模拟登录全流程（查用户→签JWT→建session），逐步返回错误
-app.get('/api/health/login', async (_req: Request, res: Response) => {
-  const out: Record<string, unknown> = { ts: Date.now() }
-  out.config = {
-    jwtSecretLen: config.jwtSecret?.length,
-    jwtSecretFirst: config.jwtSecret?.slice(0, 6),
-    jwtExpiresIn: JSON.stringify(config.jwtExpiresIn),
-    refreshExpiresIn: JSON.stringify(config.refreshExpiresIn),
-    refreshSecretLen: config.refreshSecret?.length,
-  }
-  try {
-    const u = await rdb.from(T.users).select('*').eq('phone', '13700000001').maybeSingle()
-    out.step1_findUser = u.error ? { error: u.error } : { ok: true, found: !!u.data, id: u.data?.id }
-    if (!u.data) { res.json(out); return }
-    const user = u.data
-    const jwt = await import('jsonwebtoken')
-    try {
-      const at = jwt.default.sign({ userId: user.id, phone: '13700000001' }, config.jwtSecret, {
-        expiresIn: config.jwtExpiresIn as any,
-      })
-      out.step2_signAccess = { ok: true, tokenLen: at.length }
-    } catch (e: any) {
-      out.step2_signAccess = { exception: e?.message }
-    }
-    try {
-      const rt = jwt.default.sign({ userId: user.id, phone: '13700000001' }, config.refreshSecret, {
-        expiresIn: config.refreshExpiresIn as any,
-      })
-      out.step3_signRefresh = { ok: true, tokenLen: rt.length }
-    } catch (e: any) {
-      out.step3_signRefresh = { exception: e?.message }
-    }
-  } catch (e: any) {
-    out.outerException = e?.message
-  }
-  res.json(out)
-})
-
-// 诊断端点：完整复刻 /sms/login handler，捕获真实异常
-app.get('/api/health/login2', async (_req: Request, res: Response) => {
-  const out: Record<string, unknown> = { ts: Date.now() }
-  try {
-    const phone = '13700000001'
-    const userRes = await rdb.from(T.users).select('*').eq('phone', phone).maybeSingle()
-    if (userRes.error) { out.findUserError = userRes.error; res.json(out); return }
-    let user: any = userRes.data
-    out.foundUser = { id: user?.id, phone: user?.phone, level: user?.researchLevel, points: user?.points }
-    const up = await rdb.from(T.users).update({ lastLoginAt: new Date().toISOString() }).eq('id', user.id)
-    out.update = up?.error ? { error: up.error } : { ok: true }
-    const jwt = await import('jsonwebtoken')
-    const accessToken = jwt.default.sign({ userId: user.id, phone }, config.jwtSecret, { expiresIn: config.jwtExpiresIn as any })
-    const refreshToken = jwt.default.sign({ userId: user.id, phone }, config.refreshSecret, { expiresIn: config.refreshExpiresIn as any })
-    out.tokens = { ok: true }
-    const decoded = jwt.default.decode(refreshToken) as any
-    const ins = await rdb.from(T.sessions).insert({
-      id: crypto.randomUUID(),
-      userId: user.id,
-      refreshToken,
-      expiresAt: new Date(decoded.exp * 1000).toISOString(),
-    })
-    out.sessionInsert = ins?.error ? { error: ins.error } : { ok: true }
-    const payload = {
-      code: 'OK',
-      data: {
-        accessToken, refreshToken,
-        user: {
-          id: user.id, phone: user.phone, nickname: user.nickname, avatar: user.avatar,
-          researchLevel: user.researchLevel, points: user.points,
-        },
-      },
-    }
-    JSON.stringify(payload)
-    out.payloadSerialize = { ok: true }
-  } catch (e: any) {
-    out.exception = { message: e?.message, name: e?.name, code: e?.code, stack: e?.stack?.slice(0, 800) }
-  }
-  res.json(out)
 })
 
 // ====== 路由 ======
@@ -228,10 +80,7 @@ app.use((err: any, _req: Request, res: Response, _next: any) => {
 
   res.status(500).json({
     code: 'INTERNAL_ERROR',
-    // 临时：线上排错阶段返回真实错误，定位后改回
-    message: err.message,
-    errorName: err.name,
-    stack: (err.stack || '').slice(0, 600),
+    message: config.nodeEnv === 'development' ? err.message : '服务器内部错误',
   })
 })
 
