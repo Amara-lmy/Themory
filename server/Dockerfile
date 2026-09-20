@@ -1,5 +1,5 @@
 # ====== 构建阶段 ======
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 
 # 使用腾讯云 npm 镜像加速构建
@@ -13,7 +13,7 @@ COPY src ./src
 RUN npm run build
 
 # ====== 运行阶段 ======
-FROM node:20-alpine
+FROM node:22-alpine
 WORKDIR /app
 
 # 上海时区 + HTTPS 根证书（调用腾讯云/阿里云 API 必需）
