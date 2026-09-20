@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express'
 import cors from 'cors'
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { config } from './config.js'
 import { rdb, T, unwrap } from './lib/db.js'
 import authRouter from './routes/auth.js'
@@ -59,6 +60,50 @@ app.get('/api/health/db', async (_req: Request, res: Response) => {
   } catch (e: any) {
     out.rdbOK = false
     out.dbError = e?.message || String(e)
+  }
+  res.json(out)
+})
+
+// 诊断端点：测试数据库写权限（UPDATE/INSERT/DELETE），逐步返回原始错误
+app.get('/api/health/dbwrite', async (_req: Request, res: Response) => {
+  const out: Record<string, unknown> = { ts: Date.now() }
+  // 1. 找一个用户
+  let uid = ''
+  try {
+    const u = await rdb.from(T.users).select('id').limit(1)
+    out.step1_select = u.error ? { error: u.error } : { ok: true, id: u.data?.[0]?.id }
+    uid = u.data?.[0]?.id || ''
+  } catch (e: any) {
+    out.step1_select = { exception: e?.message || String(e) }
+  }
+  // 2. UPDATE
+  if (uid) {
+    try {
+      const r = await rdb.from(T.users).update({ lastLoginAt: new Date().toISOString() }).eq('id', uid)
+      out.step2_update = r?.error ? { error: r.error, status: r.status } : { ok: true }
+    } catch (e: any) {
+      out.step2_update = { exception: e?.message || String(e), stack: e?.stack?.slice(0, 500) }
+    }
+  }
+  // 3. INSERT 一条探针 session，再删除
+  const probeId = crypto.randomUUID()
+  try {
+    const r = await rdb.from(T.sessions).insert({
+      id: probeId,
+      userId: uid || probeId,
+      refreshToken: 'probe-' + probeId,
+      expiresAt: new Date(Date.now() + 60000).toISOString(),
+    })
+    out.step3_insert = r?.error ? { error: r.error, status: r.status } : { ok: true }
+  } catch (e: any) {
+    out.step3_insert = { exception: e?.message || String(e), stack: e?.stack?.slice(0, 500) }
+  }
+  // 4. DELETE 清理
+  try {
+    const r = await rdb.from(T.sessions).delete().eq('id', probeId)
+    out.step4_delete = r?.error ? { error: r.error, status: r.status } : { ok: true }
+  } catch (e: any) {
+    out.step4_delete = { exception: e?.message || String(e) }
   }
   res.json(out)
 })
