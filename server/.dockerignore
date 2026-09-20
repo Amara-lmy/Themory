@@ -1,0 +1,12 @@
+node_modules
+dist
+.env
+.env.*
+uploads
+cloudflared.exe
+*.log
+npm-debug.log*
+Dockerfile
+.dockerignore
+.git
+.gitignore

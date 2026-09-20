@@ -1,0 +1,30 @@
+# 依赖
+node_modules/
+**/node_modules/
+
+# 构建产物
+dist/
+**/dist/
+server/dist/
+*.tsbuildinfo
+
+# 环境变量与密钥（严禁入库）
+.env
+.env.*
+server/.env
+!.env.example
+
+# 本地上传文件与临时隧道程序
+server/uploads/
+server/cloudflared.exe
+server/cloudflared.exe.old
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# 日志
+*.log
+npm-debug.log*
