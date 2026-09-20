@@ -32,6 +32,12 @@ COPY package*.json ./
 # 签名 Authorization header 时带 \n 导致 ERR_INVALID_CHAR 的 bug
 RUN npm install --omit=dev && npm install undici@6 && npm cache clean --force
 
+# Dockerfile 层面 patch @cloudbase/node-sdk：在 SDK 内部 setHeader 调用前
+# 先 strip Authorization header 里的控制字符，双重保险
+RUN find node_modules/@cloudbase/node-sdk/dist -name "*.js" -exec sed -i \
+  "s/setHeader(name, value)/setHeader(name, typeof value==='string'?value.replace(\/[\\\\r\\\\n\\\\u0000-\\\\u001f]\/g,''):value)/g" {} + \
+  || echo "sed patch skipped (non-critical)"
+
 COPY --from=builder /app/dist ./dist
 
 EXPOSE 80
